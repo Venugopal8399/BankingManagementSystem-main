@@ -1,0 +1,103 @@
+// Jenkinsfile (for multi-module Maven + Docker + docker-compose deployments)
+pipeline {
+  agent any
+
+  environment {
+    GIT_CREDENTIALS = 'github_key'        // Add this credential in Jenkins
+    IMAGE_PREFIX = "${env.JOB_NAME.toLowerCase()}" // optional prefix
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout([$class: 'GitSCM',
+          branches: [[name: '*/main']],
+          userRemoteConfigs: [[url: 'git@github.com:Venugopal8399/BankingManagementSystem-main.git', credentialsId: "${env.GIT_CREDENTIALS}"]]
+        ])
+      }
+    }
+
+    stage('Maven Build') {
+      steps {
+        sh 'mvn -B -e clean install -DskipTests'
+      }
+      post {
+        failure { archiveArtifacts artifacts: '**/target/*.jar', allowEmptyArchive: true }
+      }
+    }
+
+    stage('Build Docker Images') {
+      steps {
+        // build one image per module - adjust names if your modules differ
+        script {
+          def services = ['banking-auth-service','banking-account-service','API Gateway','transaction-service','discovery-server']
+          for (s in services) {
+            // sanitize name for docker tag (no spaces)
+            def tagName = s.replaceAll('\\s+','-').toLowerCase()
+            sh "docker build -t ${IMAGE_PREFIX}/${tagName}:latest ./${s}"
+          }
+        }
+      }
+    }
+
+    stage('Push images (optional)') {
+      when { expression { return false } } // set to true and configure registry if you want to push
+      steps {
+        sh 'echo "Configure registry push here (docker login + docker push)"'
+      }
+    }
+
+    stage('Deploy to DEV (auto)') {
+      steps {
+        dir('deploy') {
+          sh 'docker-compose -f docker-compose.dev.yml pull || true'
+          sh 'docker-compose -f docker-compose.dev.yml up -d --build'
+        }
+      }
+    }
+
+    stage('Approval: Deploy to QA') {
+      steps {
+        script {
+          input message: 'Deploy to QA?', ok: 'Deploy'
+        }
+      }
+    }
+
+    stage('Deploy to QA') {
+      steps {
+        dir('deploy') {
+          sh 'docker-compose -f docker-compose.qa.yml down || true'
+          sh 'docker-compose -f docker-compose.qa.yml up -d --build'
+        }
+      }
+    }
+
+    stage('Approval: Deploy to PROD') {
+      steps {
+        script {
+          input message: 'Deploy to PROD?', ok: 'Deploy'
+        }
+      }
+    }
+
+    stage('Deploy to PROD') {
+      steps {
+        dir('deploy') {
+          sh 'docker-compose -f docker-compose.prod.yml down || true'
+          sh 'docker-compose -f docker-compose.prod.yml up -d --build'
+        }
+      }
+    }
+  }
+
+  post {
+    success {
+      echo "Pipeline finished successfully."
+    }
+    failure {
+      mail to: 'you@example.com', subject: "Build failed: ${env.JOB_NAME} ${env.BUILD_NUMBER}", body: "See console output: ${env.BUILD_URL}"
+    }
+  }
+}

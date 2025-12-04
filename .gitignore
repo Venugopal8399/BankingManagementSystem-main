@@ -1,0 +1,8 @@
+*.jar
+.idea
+# Project exclude paths
+/account-service/target/
+/Api-gateway/target/
+/auth-service/target/
+/discovery-server/target/
+/transaction-service/target/
